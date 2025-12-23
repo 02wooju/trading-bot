@@ -1,17 +1,23 @@
+import os
+from dotenv import load_dotenv
 from alpaca.trading.client import TradingClient
 from alpaca.trading.requests import MarketOrderRequest
 from alpaca.trading.enums import OrderSide, TimeInForce
 
-# --- CONFIGURATION ---
-# Paste your NEW keys here (inside the quotes)
-API_KEY = "PKINA4ZLCIEMVIJZOVQRTGZBJN"
-SECRET_KEY = "EgCdpRwMwpp21cTkY8qJmJgWH55miqZsDGGALgJrDNAj"
+# 1. Load the secrets from the .env file
+load_dotenv()
+
+# 2. Get keys from the environment (Safe way)
+API_KEY = os.getenv("PKINA4ZLCIEMVIJZOVQRTGZBJN")
+SECRET_KEY = os.getenv("EgCdpRwMwpp21cTkY8qJmJgWH55miqZsDGGALgJrDNAj")
 
 def place_trade():
-    # 1. Connect to the "Hands" (Trading API)
-    trading_client = TradingClient(API_KEY, SECRET_KEY, paper=True)
+    # Verify keys exist before running
+    if not API_KEY or not SECRET_KEY:
+        print("Error: Keys not found. Check your .env file.")
+        return
 
-    # 2. Check how much cash we have
+    trading_client = TradingClient(API_KEY, SECRET_KEY, paper=True)
     account = trading_client.get_account()
     print(f"Buying Power: ${account.buying_power}")
 
