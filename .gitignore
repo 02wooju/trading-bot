@@ -1,1 +1,12 @@
+# Security: Never upload environment variables
+.env
 
+# Python: specific ignores
+__pycache__/
+*.py[cod]
+
+# Mac: system files
+.DS_Store
+
+# VS Code: settings
+.vscode/
