@@ -1,5 +1,7 @@
 import os
 import time
+import threading
+from flask import Flask
 from dotenv import load_dotenv
 from alpaca.data.historical import StockHistoricalDataClient
 from alpaca.data.requests import StockBarsRequest
@@ -8,16 +10,26 @@ from alpaca.trading.client import TradingClient
 from alpaca.trading.requests import MarketOrderRequest
 from alpaca.trading.enums import OrderSide, TimeInForce
 from datetime import datetime, timedelta
-
-# Import our new database tool
-import database 
+import database
 
 # --- CONFIGURATION ---
 load_dotenv()
 API_KEY = os.getenv("APCA_API_KEY_ID")
 SECRET_KEY = os.getenv("APCA_API_SECRET_KEY")
-SYMBOL = "SPY" 
+SYMBOL = "SPY"
 
+# --- FLASK WEB SERVER (For Free Tier) ---
+app = Flask(__name__)
+
+@app.route('/')
+def home():
+    return "🤖 Bot is running!"
+
+@app.route('/health')
+def health():
+    return "OK", 200
+
+# --- TRADING LOGIC (Same as before) ---
 def get_market_data():
     client = StockHistoricalDataClient(API_KEY, SECRET_KEY)
     now = datetime.now()
@@ -31,52 +43,30 @@ def get_market_data():
     return bars.df
 
 def execute_trade(signal, price):
-    """Executes the trade AND logs it to the database"""
     client = TradingClient(API_KEY, SECRET_KEY, paper=True)
-    
     if signal == "BUY":
         print(f"🚀 EXECUTING BUY ORDER FOR {SYMBOL}...")
         try:
             order_data = MarketOrderRequest(
-                symbol=SYMBOL,
-                qty=1,
-                side=OrderSide.BUY,
-                time_in_force=TimeInForce.DAY
+                symbol=SYMBOL, qty=1, side=OrderSide.BUY, time_in_force=TimeInForce.DAY
             )
             client.submit_order(order_data)
-            print("✅ BUY Order Submitted!")
-            
-            # --- MEMORY STEP ---
-            # Save this event to our database
             database.log_trade(SYMBOL, "BUY", price)
-            
         except Exception as e:
             print(f"Trade Failed: {e}")
-        
     elif signal == "SELL":
-        print(f"📉 EXECUTING SELL ORDER FOR {SYMBOL}...")
-        # (In a real bot, we would submit a SELL order here)
-        
-        # Log it anyway so we can track the signal
+        print(f"📉 SIGNAL SELL {SYMBOL}")
         database.log_trade(SYMBOL, "SELL", price)
-    
-    else:
-        print("⏸️ HOLDING.")
 
 def run_bot():
-    print(f"--- 🤖 STARTING ANALYSIS FOR {SYMBOL} ---")
-    
-    # 0. Ensure DB exists
+    print(f"--- 🤖 CHECKING MARKET {datetime.now().strftime('%H:%M:%S')} ---")
     database.initialize_db()
-    
     try:
         df = get_market_data()
         df['SMA_20'] = df['close'].rolling(window=20).mean()
         latest = df.iloc[-1]
         price = latest['close']
         sma = latest['SMA_20']
-        
-        print(f"Price: ${price:.2f} | SMA: ${sma:.2f}")
         
         if price > sma:
             signal = "BUY"
@@ -85,24 +75,27 @@ def run_bot():
         else:
             signal = "HOLD"
             
-        print(f"Signal: {signal}")
-        
-        # Pass the price to execute_trade so we can log it
+        print(f"Price: ${price:.2f} | SMA: ${sma:.2f} | Signal: {signal}")
         execute_trade(signal, price)
         
     except Exception as e:
         print(f"❌ Error: {e}")
 
-if __name__ == "__main__":
-    print("--- 🤖 ALGO TRADER INITIALIZED ---")
-    database.initialize_db()
-    
+# --- BACKGROUND LOOP ---
+def start_trading_loop():
     while True:
-        # 1. Run the analysis
-        print(f"\n[Checking Market at {datetime.now().strftime('%H:%M:%S')}]")
         run_bot()
-        
-        # 2. Wait 60 seconds before checking again
-        # This prevents us from spamming the API and getting banned
-        print("Waiting 60 seconds...")
+        # Wait 60 seconds
         time.sleep(60)
+
+# --- STARTUP ---
+if __name__ == "__main__":
+    # 1. Start the trading bot in a separate thread
+    t = threading.Thread(target=start_trading_loop)
+    t.daemon = True
+    t.start()
+    
+    # 2. Start the Flask web server (blocks the main thread)
+    # This ensures Render sees a "Web Service" running
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host='0.0.0.0', port=port)
