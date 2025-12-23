@@ -9,71 +9,75 @@ from alpaca.trading.requests import MarketOrderRequest
 from alpaca.trading.enums import OrderSide, TimeInForce
 from datetime import datetime, timedelta
 
+# Import our new database tool
+import database 
+
 # --- CONFIGURATION ---
 load_dotenv()
 API_KEY = os.getenv("APCA_API_KEY_ID")
 SECRET_KEY = os.getenv("APCA_API_SECRET_KEY")
-SYMBOL = "SPY" # Trading the S&P 500 ETF (More volume than AAPL after hours)
+SYMBOL = "SPY" 
 
 def get_market_data():
     client = StockHistoricalDataClient(API_KEY, SECRET_KEY)
-    
-    # Get only the last 200 minutes of data to ensure we are looking at "NOW"
     now = datetime.now()
     start_time = now - timedelta(minutes=200)
-    
     request = StockBarsRequest(
         symbol_or_symbols=SYMBOL,
         timeframe=TimeFrame.Minute,
         start=start_time
     )
-    
     bars = client.get_stock_bars(request)
     return bars.df
 
-def execute_trade(signal):
+def execute_trade(signal, price):
+    """Executes the trade AND logs it to the database"""
     client = TradingClient(API_KEY, SECRET_KEY, paper=True)
-    account = client.get_account()
-    
-    print(f"💰 Buying Power: ${account.buying_power}")
     
     if signal == "BUY":
         print(f"🚀 EXECUTING BUY ORDER FOR {SYMBOL}...")
-        order_data = MarketOrderRequest(
-            symbol=SYMBOL,
-            qty=1,
-            side=OrderSide.BUY,
-            time_in_force=TimeInForce.DAY
-        )
-        client.submit_order(order_data)
-        print("✅ BUY Order Submitted!")
+        try:
+            order_data = MarketOrderRequest(
+                symbol=SYMBOL,
+                qty=1,
+                side=OrderSide.BUY,
+                time_in_force=TimeInForce.DAY
+            )
+            client.submit_order(order_data)
+            print("✅ BUY Order Submitted!")
+            
+            # --- MEMORY STEP ---
+            # Save this event to our database
+            database.log_trade(SYMBOL, "BUY", price)
+            
+        except Exception as e:
+            print(f"Trade Failed: {e}")
         
     elif signal == "SELL":
-        # Note: You can only sell if you already own it! 
-        # For this test, we will just print the message.
-        print(f"📉 SIGNAL IS SELL. If we owned {SYMBOL}, we would sell now.")
+        print(f"📉 EXECUTING SELL ORDER FOR {SYMBOL}...")
+        # (In a real bot, we would submit a SELL order here)
+        
+        # Log it anyway so we can track the signal
+        database.log_trade(SYMBOL, "SELL", price)
     
     else:
-        print("⏸️ HOLDING. No trade executed.")
+        print("⏸️ HOLDING.")
 
 def run_bot():
     print(f"--- 🤖 STARTING ANALYSIS FOR {SYMBOL} ---")
     
+    # 0. Ensure DB exists
+    database.initialize_db()
+    
     try:
-        # 1. Get Data
         df = get_market_data()
-        
-        # 2. Calculate SMA
         df['SMA_20'] = df['close'].rolling(window=20).mean()
         latest = df.iloc[-1]
-        
         price = latest['close']
         sma = latest['SMA_20']
         
-        print(f"Time: {latest.name}")
         print(f"Price: ${price:.2f} | SMA: ${sma:.2f}")
         
-        # 3. Decide
         if price > sma:
             signal = "BUY"
         elif price < sma:
@@ -83,12 +87,22 @@ def run_bot():
             
         print(f"Signal: {signal}")
         
-        # 4. Execute
-        execute_trade(signal)
+        # Pass the price to execute_trade so we can log it
+        execute_trade(signal, price)
         
     except Exception as e:
         print(f"❌ Error: {e}")
-        print("NOTE: If error is 'empty data', the market might be closed/quiet.")
 
 if __name__ == "__main__":
-    run_bot()
+    print("--- 🤖 ALGO TRADER INITIALIZED ---")
+    database.initialize_db()
+    
+    while True:
+        # 1. Run the analysis
+        print(f"\n[Checking Market at {datetime.now().strftime('%H:%M:%S')}]")
+        run_bot()
+        
+        # 2. Wait 60 seconds before checking again
+        # This prevents us from spamming the API and getting banned
+        print("Waiting 60 seconds...")
+        time.sleep(60)
