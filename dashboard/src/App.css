@@ -1,5 +1,4 @@
 .App {
-  text-align: center;
   font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
   background-color: #1e1e1e;
   min-height: 100vh;
@@ -8,40 +7,57 @@
 
 .App-header {
   background-color: #282c34;
-  padding: 20px;
-  color: white;
-  border-bottom: 2px solid #444;
+  padding: 15px;
+  text-align: center;
+  border-bottom: 3px solid #00d8ff;
 }
 
-.trade-container {
-  padding: 40px;
-  display: flex;
-  justify-content: center;
+.dashboard-content {
+  max-width: 1000px;
+  margin: 0 auto;
+  padding: 20px;
+}
+
+/* CHART STYLES */
+.chart-container {
+  background-color: #2c2c2c;
+  padding: 20px;
+  border-radius: 12px;
+  margin-bottom: 30px;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.4);
+}
+
+/* TABLE STYLES */
+.table-container {
+  background-color: #2c2c2c;
+  padding: 20px;
+  border-radius: 12px;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.4);
+}
+
+h3 {
+  margin-top: 0;
+  color: #ccc;
+  border-bottom: 1px solid #444;
+  padding-bottom: 10px;
 }
 
 .trade-table {
-  width: 80%;
-  max-width: 800px;
+  width: 100%;
   border-collapse: collapse;
-  background-color: #2c2c2c;
-  border-radius: 8px;
-  overflow: hidden;
-  box-shadow: 0 4px 15px rgba(0,0,0,0.5);
 }
 
 .trade-table th, .trade-table td {
-  padding: 15px 20px;
+  padding: 12px 15px;
   border-bottom: 1px solid #444;
   text-align: left;
 }
 
 .trade-table th {
-  background-color: #333;
+  color: #888;
+  font-size: 0.8rem;
   text-transform: uppercase;
-  font-size: 0.85rem;
-  letter-spacing: 1px;
-  color: #aaa;
 }
 
-.buy-row { color: #4caf50; font-weight: bold; } /* Green */
-.sell-row { color: #f44336; font-weight: bold; } /* Red */
+.buy-row { color: #4caf50; font-weight: bold; }
+.sell-row { color: #f44336; font-weight: bold; }

@@ -46,6 +46,32 @@ def trades():
         })
     return jsonify(json_data)
 
+@app.route('/api/history')
+def history():
+    """Returns the last 200 minutes of price data for the chart"""
+    try:
+        df = get_market_data()
+        
+        # FIX: Flatten the data structure so it's easier to read
+        df = df.reset_index()
+        
+        chart_data = []
+        for index, row in df.iterrows():
+            # safely get the time and price
+            time_val = row['timestamp']
+            price_val = row['close']
+            
+            chart_data.append({
+                "time": time_val.strftime('%H:%M'),  # Format as "14:30"
+                "price": price_val
+            })
+            
+        return jsonify(chart_data)
+        
+    except Exception as e:
+        print(f"❌ CHART ERROR: {e}") # This will show us the error in the terminal
+        return jsonify({"error": str(e)}), 500
+
 # --- TRADING LOGIC ---
 def get_market_data():
     client = StockHistoricalDataClient(API_KEY, SECRET_KEY)
