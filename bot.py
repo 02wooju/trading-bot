@@ -1,7 +1,7 @@
 import os
 import time
 import threading
-from flask import Flask, jsonify
+from flask import Flask, jsonify, request
 from flask_cors import CORS  # <--- THIS IS THE KEY
 from dotenv import load_dotenv
 from alpaca.data.historical import StockHistoricalDataClient
@@ -70,6 +70,38 @@ def history():
         
     except Exception as e:
         print(f"❌ CHART ERROR: {e}") # This will show us the error in the terminal
+        return jsonify({"error": str(e)}), 500
+    
+@app.route('/api/account')
+def account():
+    """Returns live account balance and equity"""
+    try:
+        client = TradingClient(API_KEY, SECRET_KEY, paper=True)
+        account = client.get_account()
+        return jsonify({
+            "cash": float(account.cash),
+            "equity": float(account.equity),
+            "buying_power": float(account.buying_power)
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/manual', methods=['POST'])
+def manual_trade():
+    """Allows the Frontend to force a trade"""
+    try:
+        data = request.json
+        action = data.get('action').upper() # "BUY" or "SELL"
+        
+        # We reuse our existing logic!
+        # Fetch current price just for logging
+        df = get_market_data()
+        current_price = df.iloc[-1]['close']
+        
+        execute_trade(action, current_price)
+        
+        return jsonify({"status": "success", "message": f"Manual {action} executed"})
+    except Exception as e:
         return jsonify({"error": str(e)}), 500
 
 # --- TRADING LOGIC ---
