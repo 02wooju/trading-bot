@@ -1,13 +1,15 @@
 import React, { useEffect, useState } from 'react';
 import axios from 'axios';
-import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
+import { 
+  ComposedChart, Line, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid 
+} from 'recharts';
 import './App.css';
 
 function App() {
   const [trades, setTrades] = useState([]);
   const [chartData, setChartData] = useState([]);
-  const [account, setAccount] = useState({ equity: 0, cash: 0 }); // New Account State
-  const [loading, setLoading] = useState(true);
+  const [account, setAccount] = useState({ equity: 0, cash: 0 });
+  const [viewMode, setViewMode] = useState('pro'); // 'simple' or 'pro'
 
   // SWITCH THIS when deploying!
   //const API_URL = "http://127.0.0.1:5000"; 
@@ -15,31 +17,31 @@ function App() {
 
   useEffect(() => {
     fetchData();
-    const interval = setInterval(fetchData, 10000); // Refresh every 10s (faster)
+    const interval = setInterval(fetchData, 5000); // Fast 5s refresh
     return () => clearInterval(interval);
   }, []);
 
   const fetchData = async () => {
     try {
-      const tradeRes = await axios.get(`${API_URL}/api/trades`);
-      const historyRes = await axios.get(`${API_URL}/api/history`);
-      const accountRes = await axios.get(`${API_URL}/api/account`); // New Fetch
+      const [tradeRes, historyRes, accountRes] = await Promise.all([
+        axios.get(`${API_URL}/api/trades`),
+        axios.get(`${API_URL}/api/history`),
+        axios.get(`${API_URL}/api/account`)
+      ]);
 
       setTrades(tradeRes.data);
       setChartData(historyRes.data);
       setAccount(accountRes.data);
-      setLoading(false);
     } catch (error) {
       console.error("Error connecting to bot:", error);
     }
   };
 
-  // Function to handle Button Clicks
   const handleManualTrade = async (action) => {
     try {
-      await axios.post(`${API_URL}/api/manual`, { action: action });
+      await axios.post(`${API_URL}/api/manual`, { action });
       alert(`Manual ${action} Order Sent!`);
-      fetchData(); // Refresh immediately
+      fetchData();
     } catch (error) {
       alert("Trade Failed: " + error.message);
     }
@@ -47,64 +49,108 @@ function App() {
 
   return (
     <div className="App">
+      {/* HEADER WITH STATS */}
       <header className="App-header">
-        <h1>🚀 Algo-Trading Commander</h1>
+        <h1>🚀 QUANT COMMANDER <span style={{fontSize:'0.8rem', color:'#666', marginLeft:'10px'}}>v2.0</span></h1>
+        <div className="stats-bar">
+          <div className="stat-box">
+            <span className="stat-label">Equity</span>
+            <span className="stat-value">${account.equity.toLocaleString()}</span>
+          </div>
+          <div className="stat-box">
+            <span className="stat-label">Cash</span>
+            <span className="stat-value">${account.cash.toLocaleString()}</span>
+          </div>
+        </div>
       </header>
 
-      <div className="stats-bar">
-        <div className="stat-card">
-          <span className="stat-label">Total Equity</span>
-          <span className="stat-value">${account.equity.toLocaleString()}</span>
-        </div>
-        <div className="stat-card">
-          <span className="stat-label">Available Cash</span>
-          <span className="stat-value">${account.cash.toLocaleString()}</span>
-        </div>
+      {/* EXPLANATION PANEL */}
+      <div className="info-panel">
+        <span className="info-title">ℹ️ How This Works</span>
+        This is an autonomous trading bot running a <strong>Dual-SMA Crossover Strategy</strong>. 
+        It buys SPY when the Fast Moving Average (Green) crosses above the Slow Average (Orange), indicating an uptrend. 
+        It filters out bad trades using the Relative Strength Index (RSI).
       </div>
 
       <div className="dashboard-content">
         
+        {/* CHART SECTION */}
+        <div className="chart-container">
+          <div className="chart-header">
+            <h3>Live Market Analysis (SPY)</h3>
+            <div className="chart-controls">
+              <button 
+                className={`toggle-btn ${viewMode === 'simple' ? 'active' : ''}`} 
+                onClick={() => setViewMode('simple')}>
+                Simple
+              </button>
+              <button 
+                className={`toggle-btn ${viewMode === 'pro' ? 'active' : ''}`} 
+                onClick={() => setViewMode('pro')}>
+                Pro (Indicators)
+              </button>
+            </div>
+          </div>
+          
+          <ResponsiveContainer width="100%" height={400}>
+            <ComposedChart data={chartData}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#333" />
+              <XAxis dataKey="time" stroke="#666" fontSize={11} tickCount={10}/>
+              <YAxis domain={['dataMin', 'dataMax']} stroke="#666" fontSize={11} />
+              <Tooltip 
+                contentStyle={{ backgroundColor: '#222', border: '1px solid #444' }} 
+                itemStyle={{ color: '#fff' }}
+              />
+              
+              {/* PRICE AREA (Like a modern fintech app) */}
+              <Area 
+                type="monotone" 
+                dataKey="price" 
+                stroke="#00d8ff" 
+                fillOpacity={0.1} 
+                fill="#00d8ff" 
+                strokeWidth={2} 
+              />
+
+              {/* INDICATORS (Only in PRO mode) */}
+              {viewMode === 'pro' && (
+                <>
+                  <Line type="monotone" dataKey="sma_fast" stroke="#4caf50" strokeWidth={2} dot={false} />
+                  <Line type="monotone" dataKey="sma_slow" stroke="#ff9800" strokeWidth={2} dot={false} strokeDasharray="5 5" />
+                </>
+              )}
+            </ComposedChart>
+          </ResponsiveContainer>
+        </div>
+
         {/* CONTROLS */}
         <div className="control-panel">
-          <button className="btn btn-buy" onClick={() => handleManualTrade("BUY")}>BUY SPY (Market)</button>
-          <button className="btn btn-sell" onClick={() => handleManualTrade("SELL")}>SELL SPY (Market)</button>
+          <button className="btn btn-buy" onClick={() => handleManualTrade("BUY")}>Override: BUY</button>
+          <button className="btn btn-sell" onClick={() => handleManualTrade("SELL")}>Override: SELL</button>
         </div>
 
-        {/* CHART */}
-        <div className="chart-container">
-          <h3>Market Trend (SPY)</h3>
-          {loading ? <p>Loading Data...</p> : (
-            <ResponsiveContainer width="100%" height={300}>
-              <LineChart data={chartData}>
-                <XAxis dataKey="time" stroke="#8884d8" fontSize={12} tickCount={10}/>
-                <YAxis domain={['dataMin', 'dataMax']} stroke="#8884d8" fontSize={12}/>
-                <Tooltip contentStyle={{ backgroundColor: '#333', border: 'none' }} itemStyle={{ color: '#fff' }}/>
-                <Line type="monotone" dataKey="price" stroke="#00d8ff" strokeWidth={2} dot={false} />
-                <Line type="monotone" dataKey="sma_fast" stroke="#4caf50" strokeWidth={2} dot={false} />
-                <Line type="monotone" dataKey="sma_slow" stroke="#ff9800" strokeWidth={2} dot={false} strokeDasharray="5 5" />
-              </LineChart>
-            </ResponsiveContainer>
-          )}
-        </div>
-
-        {/* TABLE */}
+        {/* LOGS */}
         <div className="table-container">
-          <h3>Execution Log</h3>
+          <h3>Algorithmic Execution Log</h3>
           <table className="trade-table">
             <thead>
-              <tr><th>Time</th><th>Symbol</th><th>Action</th><th>Price</th></tr>
+              <tr><th>Timestamp</th><th>Symbol</th><th>Signal</th><th>Fill Price</th></tr>
             </thead>
             <tbody>
-              {trades.length === 0 ? <tr><td colSpan="4">No trades yet.</td></tr> : 
+              {trades.length === 0 ? <tr><td colSpan="4">Waiting for market signals...</td></tr> : 
                 trades.map((t) => (
-                  <tr key={t.id} className={t.action === "BUY" ? "buy-row" : "sell-row"}>
-                    <td>{t.timestamp}</td><td>{t.symbol}</td><td><strong>{t.action}</strong></td><td>${t.price.toFixed(2)}</td>
+                  <tr key={t.id}>
+                    <td>{t.timestamp}</td>
+                    <td>{t.symbol}</td>
+                    <td className={t.action === "BUY" ? "buy-row" : "sell-row"}><strong>{t.action}</strong></td>
+                    <td>${t.price.toFixed(2)}</td>
                   </tr>
                 ))
               }
             </tbody>
           </table>
         </div>
+
       </div>
     </div>
   );
