@@ -1,7 +1,8 @@
 import os
 import time
 import threading
-from flask import Flask
+from flask import Flask, jsonify
+from flask_cors import CORS  # <--- THIS IS THE KEY
 from dotenv import load_dotenv
 from alpaca.data.historical import StockHistoricalDataClient
 from alpaca.data.requests import StockBarsRequest
@@ -18,8 +19,9 @@ API_KEY = os.getenv("APCA_API_KEY_ID")
 SECRET_KEY = os.getenv("APCA_API_SECRET_KEY")
 SYMBOL = "SPY"
 
-# --- FLASK WEB SERVER (For Free Tier) ---
+# --- FLASK WEB SERVER ---
 app = Flask(__name__)
+CORS(app)  # <--- THIS UNBLOCKS THE BROWSER
 
 @app.route('/')
 def home():
@@ -29,7 +31,22 @@ def home():
 def health():
     return "OK", 200
 
-# --- TRADING LOGIC (Same as before) ---
+@app.route('/api/trades')
+def trades():
+    """Returns trade history as JSON for the React Frontend"""
+    raw_data = database.get_trade_history()
+    json_data = []
+    for row in raw_data:
+        json_data.append({
+            "id": row[0],
+            "symbol": row[1],
+            "action": row[2],
+            "price": row[3],
+            "timestamp": row[4]
+        })
+    return jsonify(json_data)
+
+# --- TRADING LOGIC ---
 def get_market_data():
     client = StockHistoricalDataClient(API_KEY, SECRET_KEY)
     now = datetime.now()
@@ -81,21 +98,14 @@ def run_bot():
     except Exception as e:
         print(f"❌ Error: {e}")
 
-# --- BACKGROUND LOOP ---
 def start_trading_loop():
     while True:
         run_bot()
-        # Wait 60 seconds
         time.sleep(60)
 
-# --- STARTUP ---
 if __name__ == "__main__":
-    # 1. Start the trading bot in a separate thread
     t = threading.Thread(target=start_trading_loop)
     t.daemon = True
     t.start()
-    
-    # 2. Start the Flask web server (blocks the main thread)
-    # This ensures Render sees a "Web Service" running
     port = int(os.environ.get("PORT", 5000))
     app.run(host='0.0.0.0', port=port)
