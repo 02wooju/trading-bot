@@ -80,6 +80,8 @@ function App() {
                 <YAxis domain={['dataMin', 'dataMax']} stroke="#8884d8" fontSize={12}/>
                 <Tooltip contentStyle={{ backgroundColor: '#333', border: 'none' }} itemStyle={{ color: '#fff' }}/>
                 <Line type="monotone" dataKey="price" stroke="#00d8ff" strokeWidth={2} dot={false} />
+                <Line type="monotone" dataKey="sma_fast" stroke="#4caf50" strokeWidth={2} dot={false} />
+                <Line type="monotone" dataKey="sma_slow" stroke="#ff9800" strokeWidth={2} dot={false} strokeDasharray="5 5" />
               </LineChart>
             </ResponsiveContainer>
           )}

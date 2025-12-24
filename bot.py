@@ -1,8 +1,10 @@
 import os
 import time
 import threading
+import pandas as pd
+import numpy as np
 from flask import Flask, jsonify, request
-from flask_cors import CORS  # <--- THIS IS THE KEY
+from flask_cors import CORS 
 from dotenv import load_dotenv
 from alpaca.data.historical import StockHistoricalDataClient
 from alpaca.data.requests import StockBarsRequest
@@ -21,11 +23,11 @@ SYMBOL = "SPY"
 
 # --- FLASK WEB SERVER ---
 app = Flask(__name__)
-CORS(app)  # <--- THIS UNBLOCKS THE BROWSER
+CORS(app)
 
 @app.route('/')
 def home():
-    return "🤖 Bot is running!"
+    return "🤖 Smart-Bot is running!"
 
 @app.route('/health')
 def health():
@@ -33,48 +35,44 @@ def health():
 
 @app.route('/api/trades')
 def trades():
-    """Returns trade history as JSON for the React Frontend"""
     raw_data = database.get_trade_history()
     json_data = []
     for row in raw_data:
         json_data.append({
-            "id": row[0],
-            "symbol": row[1],
-            "action": row[2],
-            "price": row[3],
-            "timestamp": row[4]
+            "id": row[0], "symbol": row[1], "action": row[2], 
+            "price": row[3], "timestamp": row[4]
         })
     return jsonify(json_data)
 
 @app.route('/api/history')
 def history():
-    """Returns the last 200 minutes of price data for the chart"""
+    """Returns price data PLUS the new indicators (SMA_10, SMA_30)"""
     try:
         df = get_market_data()
         
-        # FIX: Flatten the data structure so it's easier to read
+        # 1. Calculate Indicators
+        df['SMA_10'] = df['close'].rolling(window=10).mean()
+        df['SMA_30'] = df['close'].rolling(window=30).mean()
+        
         df = df.reset_index()
         
         chart_data = []
         for index, row in df.iterrows():
-            # safely get the time and price
-            time_val = row['timestamp']
-            price_val = row['close']
-            
+            if pd.isna(row['SMA_30']): continue # Skip until we have enough data
+                
             chart_data.append({
-                "time": time_val.strftime('%H:%M'),  # Format as "14:30"
-                "price": price_val
+                "time": row['timestamp'].strftime('%H:%M'),
+                "price": row['close'],
+                "sma_fast": row['SMA_10'],
+                "sma_slow": row['SMA_30']
             })
             
         return jsonify(chart_data)
-        
     except Exception as e:
-        print(f"❌ CHART ERROR: {e}") # This will show us the error in the terminal
         return jsonify({"error": str(e)}), 500
     
 @app.route('/api/account')
 def account():
-    """Returns live account balance and equity"""
     try:
         client = TradingClient(API_KEY, SECRET_KEY, paper=True)
         account = client.get_account()
@@ -88,18 +86,12 @@ def account():
 
 @app.route('/api/manual', methods=['POST'])
 def manual_trade():
-    """Allows the Frontend to force a trade"""
     try:
         data = request.json
-        action = data.get('action').upper() # "BUY" or "SELL"
-        
-        # We reuse our existing logic!
-        # Fetch current price just for logging
+        action = data.get('action').upper()
         df = get_market_data()
         current_price = df.iloc[-1]['close']
-        
         execute_trade(action, current_price)
-        
         return jsonify({"status": "success", "message": f"Manual {action} executed"})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
@@ -108,49 +100,66 @@ def manual_trade():
 def get_market_data():
     client = StockHistoricalDataClient(API_KEY, SECRET_KEY)
     now = datetime.now()
-    start_time = now - timedelta(minutes=200)
     request = StockBarsRequest(
         symbol_or_symbols=SYMBOL,
         timeframe=TimeFrame.Minute,
-        start=start_time
+        start=now - timedelta(minutes=200)
     )
     bars = client.get_stock_bars(request)
     return bars.df
 
+def calculate_rsi(series, period=14):
+    delta = series.diff()
+    gain = (delta.where(delta > 0, 0)).rolling(window=period).mean()
+    loss = (-delta.where(delta < 0, 0)).rolling(window=period).mean()
+    rs = gain / loss
+    return 100 - (100 / (1 + rs))
+
 def execute_trade(signal, price):
     client = TradingClient(API_KEY, SECRET_KEY, paper=True)
     if signal == "BUY":
-        print(f"🚀 EXECUTING BUY ORDER FOR {SYMBOL}...")
+        print(f"🚀 BUY ORDER: {SYMBOL} @ {price}")
         try:
-            order_data = MarketOrderRequest(
-                symbol=SYMBOL, qty=1, side=OrderSide.BUY, time_in_force=TimeInForce.DAY
-            )
+            order_data = MarketOrderRequest(symbol=SYMBOL, qty=1, side=OrderSide.BUY, time_in_force=TimeInForce.DAY)
             client.submit_order(order_data)
             database.log_trade(SYMBOL, "BUY", price)
         except Exception as e:
             print(f"Trade Failed: {e}")
     elif signal == "SELL":
-        print(f"📉 SIGNAL SELL {SYMBOL}")
+        print(f"📉 SELL ORDER: {SYMBOL} @ {price}")
         database.log_trade(SYMBOL, "SELL", price)
 
 def run_bot():
-    print(f"--- 🤖 CHECKING MARKET {datetime.now().strftime('%H:%M:%S')} ---")
+    print(f"--- 🤖 ANALYZING MARKET {datetime.now().strftime('%H:%M:%S')} ---")
     database.initialize_db()
     try:
         df = get_market_data()
-        df['SMA_20'] = df['close'].rolling(window=20).mean()
+        
+        # --- NEW MATH ---
+        df['SMA_10'] = df['close'].rolling(window=10).mean()
+        df['SMA_30'] = df['close'].rolling(window=30).mean()
+        df['RSI'] = calculate_rsi(df['close'])
+        
         latest = df.iloc[-1]
         price = latest['close']
-        sma = latest['SMA_20']
+        sma_fast = latest['SMA_10']
+        sma_slow = latest['SMA_30']
+        rsi = latest['RSI']
         
-        if price > sma:
+        # --- NEW STRATEGY ---
+        signal = "HOLD"
+        
+        # BUY CRITERIA: Fast crosses above Slow AND RSI is not Overbought (>70)
+        if sma_fast > sma_slow and rsi < 70:
             signal = "BUY"
-        elif price < sma:
-            signal = "SELL"
-        else:
-            signal = "HOLD"
             
-        print(f"Price: ${price:.2f} | SMA: ${sma:.2f} | Signal: {signal}")
+        # SELL CRITERIA: Fast crosses below Slow (Trend Reversal)
+        elif sma_fast < sma_slow:
+            signal = "SELL"
+            
+        print(f"Price: ${price:.2f} | Fast: {sma_fast:.2f} | Slow: {sma_slow:.2f} | RSI: {rsi:.1f} | Signal: {signal}")
+        
+        # Only trade if signal changes (Basic logic for now)
         execute_trade(signal, price)
         
     except Exception as e:
