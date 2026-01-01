@@ -8,149 +8,157 @@ import './App.css';
 function App() {
   const [trades, setTrades] = useState([]);
   const [chartData, setChartData] = useState([]);
-  const [account, setAccount] = useState({ equity: 0, cash: 0 });
-  const [viewMode, setViewMode] = useState('pro'); // 'simple' or 'pro'
+  const [positions, setPositions] = useState([]); // New state for Active Positions
+  const [account, setAccount] = useState({ equity: 0, cash: 0, symbol: '---' });
+  
+  // UI STATES
+  const [isBotActive, setIsBotActive] = useState(false);
+  const [watchlist, setWatchlist] = useState(['BTC/USD', 'ETH/USD', 'SPY', 'TSLA', 'NVDA']);
 
-  // SWITCH THIS when deploying!
-  //const API_URL = "http://127.0.0.1:5000"; 
+  //const API_URL = "http://127.0.0.1:5001"; 
   const API_URL = "https://trading-bot-bmku.onrender.com";
 
   useEffect(() => {
     fetchData();
-    const interval = setInterval(fetchData, 5000); // Fast 5s refresh
-    return () => clearInterval(interval);
+    const timer = setInterval(fetchData, 2000); // 2s Refresh
+    return () => clearInterval(timer);
   }, []);
 
   const fetchData = async () => {
     try {
-      const [tradeRes, historyRes, accountRes] = await Promise.all([
+      const [tradeRes, historyRes, accountRes, posRes] = await Promise.all([
         axios.get(`${API_URL}/api/trades`),
         axios.get(`${API_URL}/api/history`),
-        axios.get(`${API_URL}/api/account`)
+        axios.get(`${API_URL}/api/account`),
+        axios.get(`${API_URL}/api/positions`) // Fetch open trades
       ]);
-
       setTrades(tradeRes.data);
       setChartData(historyRes.data);
       setAccount(accountRes.data);
-    } catch (error) {
-      console.error("Error connecting to bot:", error);
-    }
+      setPositions(posRes.data);
+      setIsBotActive(accountRes.data.active);
+    } catch (err) { console.error(err); }
+  };
+
+  const loadAsset = async (symbol) => {
+    try { 
+        await axios.post(`${API_URL}/api/settings`, { symbol }); 
+        fetchData(); 
+    } catch (err) { alert("Error switching asset"); }
+  };
+
+  const handleToggle = async () => {
+    try {
+      const res = await axios.post(`${API_URL}/api/toggle`);
+      setIsBotActive(res.data.active);
+    } catch (err) { alert("Error"); }
   };
 
   const handleManualTrade = async (action) => {
-    try {
-      await axios.post(`${API_URL}/api/manual`, { action });
-      alert(`Manual ${action} Order Sent!`);
-      fetchData();
-    } catch (error) {
-      alert("Trade Failed: " + error.message);
-    }
+    try { await axios.post(`${API_URL}/api/manual`, { action }); fetchData(); } 
+    catch (err) { alert(err.message); }
   };
 
   return (
-    <div className="App">
-      {/* HEADER WITH STATS */}
-      <header className="App-header">
-        <h1>🚀 QUANT COMMANDER <span style={{fontSize:'0.8rem', color:'#666', marginLeft:'10px'}}>v2.0</span></h1>
-        <div className="stats-bar">
-          <div className="stat-box">
-            <span className="stat-label">Equity</span>
+    <div className="tv-container">
+      {/* HEADER */}
+      <header className="tv-header">
+        <div className="tv-brand">QUANT COMMANDER <span className="pro-badge">PRO</span></div>
+        <div className="tv-ticker-info">
+          <span className="ticker-name">{account.symbol}</span>
+          <span className="ticker-badge">LIVE</span>
+        </div>
+        <div className="tv-stats">
+            <span className="stat-label">EQUITY:</span>
             <span className="stat-value">${account.equity.toLocaleString()}</span>
-          </div>
-          <div className="stat-box">
-            <span className="stat-label">Cash</span>
-            <span className="stat-value">${account.cash.toLocaleString()}</span>
-          </div>
         </div>
       </header>
 
-      {/* EXPLANATION PANEL */}
-      <div className="info-panel">
-        <span className="info-title">ℹ️ How This Works</span>
-        This is an autonomous trading bot running a <strong>Dual-SMA Crossover Strategy</strong>. 
-        It buys SPY when the Fast Moving Average (Green) crosses above the Slow Average (Orange), indicating an uptrend. 
-        It filters out bad trades using the Relative Strength Index (RSI).
-      </div>
-
-      <div className="dashboard-content">
-        
-        {/* CHART SECTION */}
-        <div className="chart-container">
-          <div className="chart-header">
-            <h3>Live Market Analysis (SPY)</h3>
-            <div className="chart-controls">
-              <button 
-                className={`toggle-btn ${viewMode === 'simple' ? 'active' : ''}`} 
-                onClick={() => setViewMode('simple')}>
-                Simple
-              </button>
-              <button 
-                className={`toggle-btn ${viewMode === 'pro' ? 'active' : ''}`} 
-                onClick={() => setViewMode('pro')}>
-                Pro (Indicators)
-              </button>
-            </div>
-          </div>
-          
-          <ResponsiveContainer width="100%" height={400}>
+      <div className="tv-body">
+        {/* CHART */}
+        <main className="tv-chart-area">
+          <ResponsiveContainer width="100%" height="100%">
             <ComposedChart data={chartData}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#333" />
-              <XAxis dataKey="time" stroke="#666" fontSize={11} tickCount={10}/>
-              <YAxis domain={['dataMin', 'dataMax']} stroke="#666" fontSize={11} />
-              <Tooltip 
-                contentStyle={{ backgroundColor: '#222', border: '1px solid #444' }} 
-                itemStyle={{ color: '#fff' }}
-              />
+              <CartesianGrid strokeDasharray="1 1" stroke="#2a2e39" vertical={false} />
+              <XAxis dataKey="time" stroke="#787b86" fontSize={11} tickLine={false} axisLine={false} tick={{dy: 10}} />
+              <YAxis domain={['auto', 'auto']} orientation="right" stroke="#787b86" fontSize={11} tickLine={false} axisLine={false} />
+              <Tooltip contentStyle={{ backgroundColor: '#131722', border: '1px solid #2a2e39', color: '#fff' }} />
               
-              {/* PRICE AREA (Like a modern fintech app) */}
-              <Area 
-                type="monotone" 
-                dataKey="price" 
-                stroke="#00d8ff" 
-                fillOpacity={0.1} 
-                fill="#00d8ff" 
-                strokeWidth={2} 
-              />
-
-              {/* INDICATORS (Only in PRO mode) */}
-              {viewMode === 'pro' && (
-                <>
-                  <Line type="monotone" dataKey="sma_fast" stroke="#4caf50" strokeWidth={2} dot={false} />
-                  <Line type="monotone" dataKey="sma_slow" stroke="#ff9800" strokeWidth={2} dot={false} strokeDasharray="5 5" />
-                </>
-              )}
+              <Area type="monotone" dataKey="close" stroke="#2962ff" strokeWidth={2} fillOpacity={0.1} fill="#2962ff" />
+              <Line type="monotone" dataKey="sma_fast" stroke="#22ab94" dot={false} strokeWidth={1.5} />
+              <Line type="monotone" dataKey="sma_slow" stroke="#f23645" dot={false} strokeWidth={1.5} />
             </ComposedChart>
           </ResponsiveContainer>
-        </div>
+        </main>
 
-        {/* CONTROLS */}
-        <div className="control-panel">
-          <button className="btn btn-buy" onClick={() => handleManualTrade("BUY")}>Override: BUY</button>
-          <button className="btn btn-sell" onClick={() => handleManualTrade("SELL")}>Override: SELL</button>
-        </div>
+        {/* SIDEBAR */}
+        <aside className="tv-sidebar">
+            <div className="sidebar-section watchlist">
+                <div className="section-header"><span>WATCHLIST</span></div>
+                <div className="watchlist-items">
+                    {watchlist.map(sym => (
+                        <div key={sym} className={`watchlist-item ${account.symbol === sym ? 'active' : ''}`} onClick={() => loadAsset(sym)}>
+                            <span className="wl-sym">{sym}</span>
+                        </div>
+                    ))}
+                </div>
+            </div>
 
-        {/* LOGS */}
-        <div className="table-container">
-          <h3>Algorithmic Execution Log</h3>
-          <table className="trade-table">
-            <thead>
-              <tr><th>Timestamp</th><th>Symbol</th><th>Signal</th><th>Fill Price</th></tr>
-            </thead>
-            <tbody>
-              {trades.length === 0 ? <tr><td colSpan="4">Waiting for market signals...</td></tr> : 
-                trades.map((t) => (
-                  <tr key={t.id}>
-                    <td>{t.timestamp}</td>
-                    <td>{t.symbol}</td>
-                    <td className={t.action === "BUY" ? "buy-row" : "sell-row"}><strong>{t.action}</strong></td>
-                    <td>${t.price.toFixed(2)}</td>
-                  </tr>
-                ))
-              }
-            </tbody>
-          </table>
-        </div>
+            {/* NEW: OPEN POSITIONS */}
+            <div className="sidebar-section positions">
+                <div className="section-header"><span>OPEN POSITIONS</span></div>
+                <div className="positions-list">
+                    {positions.length === 0 ? (
+                        <div className="empty-msg">No active trades</div>
+                    ) : (
+                        positions.map((pos) => (
+                            <div key={pos.symbol} className="pos-item">
+                                <div className="pos-header">
+                                    <span className="pos-sym">{pos.symbol}</span>
+                                    <span className="pos-time">{pos.entry_time}</span>
+                                </div>
+                                <div className="pos-details">
+                                    <div className="pos-row">
+                                        <span>Entry:</span> <span>${pos.entry_price.toFixed(2)}</span>
+                                    </div>
+                                    <div className="pos-row">
+                                        <span>Current:</span> <span>${pos.current_price.toFixed(2)}</span>
+                                    </div>
+                                    <div className={`pos-row pl ${pos.pl >= 0 ? 'win' : 'loss'}`}>
+                                        <span>P/L:</span> 
+                                        <span>${pos.pl.toFixed(2)} ({pos.pl_pct.toFixed(2)}%)</span>
+                                    </div>
+                                </div>
+                            </div>
+                        ))
+                    )}
+                </div>
+            </div>
 
+            <div className="sidebar-section orders">
+                <div className="section-header"><span>CONTROLS</span></div>
+                <button className={`toggle-system-btn ${isBotActive ? 'on' : 'off'}`} onClick={handleToggle}>
+                  {isBotActive ? '🛑 STOP ALGO' : '▶ START ALGO'}
+                </button>
+                <div className="order-buttons">
+                    <button className="tv-btn buy" onClick={() => handleManualTrade("BUY")}>BUY</button>
+                    <button className="tv-btn sell" onClick={() => handleManualTrade("SELL")}>SELL</button>
+                </div>
+            </div>
+            
+            <div className="sidebar-section history">
+                <div className="section-header"><span>TRADE HISTORY</span></div>
+                <div className="history-list">
+                    {trades.slice(0, 10).map((t) => (
+                        <div key={t.id} className="history-item">
+                            <span className={`badge ${t.action}`}>{t.action}</span>
+                            <span className="hist-sym">{t.symbol}</span>
+                            <span className="hist-price">${t.price.toFixed(2)}</span>
+                        </div>
+                    ))}
+                </div>
+            </div>
+        </aside>
       </div>
     </div>
   );

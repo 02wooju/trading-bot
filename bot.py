@@ -1,17 +1,19 @@
 import os
 import time
 import threading
+import math
 import pandas as pd
-import numpy as np
 from flask import Flask, jsonify, request
 from flask_cors import CORS 
 from dotenv import load_dotenv
-from alpaca.data.historical import StockHistoricalDataClient
-from alpaca.data.requests import StockBarsRequest
+
+# --- IMPORTS ---
+from alpaca.data.historical import StockHistoricalDataClient, CryptoHistoricalDataClient
+from alpaca.data.requests import StockBarsRequest, CryptoBarsRequest
 from alpaca.data.timeframe import TimeFrame
 from alpaca.trading.client import TradingClient
-from alpaca.trading.requests import MarketOrderRequest
-from alpaca.trading.enums import OrderSide, TimeInForce
+from alpaca.trading.requests import MarketOrderRequest, GetAssetsRequest, GetOrdersRequest
+from alpaca.trading.enums import OrderSide, TimeInForce, AssetStatus, QueryOrderStatus
 from datetime import datetime, timedelta
 import database
 
@@ -19,160 +21,212 @@ import database
 load_dotenv()
 API_KEY = os.getenv("APCA_API_KEY_ID")
 SECRET_KEY = os.getenv("APCA_API_SECRET_KEY")
-SYMBOL = "SPY"
 
-# --- FLASK WEB SERVER ---
+# --- HEDGE FUND SETTINGS ---
+WATCHLIST = ['BTC/USD', 'ETH/USD', 'SPY', 'QQQ', 'NVDA', 'TSLA'] 
+MAX_POS_SIZE = 0.10  # Risk management: Max 10% per trade
+TRADING_ACTIVE = False 
+CURRENT_SYMBOL = "BTC/USD" 
+
 app = Flask(__name__)
 CORS(app)
 
-@app.route('/')
-def home():
-    return "🤖 Smart-Bot is running!"
+# --- CACHING ---
+ASSET_CACHE = []
+def cache_assets():
+    global ASSET_CACHE
+    try:
+        print("⏳ Loading Asset Database...")
+        client = TradingClient(API_KEY, SECRET_KEY, paper=True)
+        req = GetAssetsRequest(status=AssetStatus.ACTIVE)
+        assets = client.get_all_assets(req)
+        temp = [{"symbol": a.symbol, "name": a.name} for a in assets if a.tradable]
+        ASSET_CACHE = temp
+        print(f"✅ Loaded {len(ASSET_CACHE)} Assets!")
+    except: pass
 
-@app.route('/health')
-def health():
-    return "OK", 200
+# --- ROUTES ---
+@app.route('/')
+def home(): return f"🤖 Bot Active: {TRADING_ACTIVE}"
+
+@app.route('/api/toggle', methods=['POST'])
+def toggle():
+    global TRADING_ACTIVE
+    TRADING_ACTIVE = not TRADING_ACTIVE
+    return jsonify({"active": TRADING_ACTIVE})
+
+@app.route('/api/status')
+def status(): return jsonify({"active": TRADING_ACTIVE, "symbol": CURRENT_SYMBOL})
+
+@app.route('/api/assets')
+def assets(): return jsonify(ASSET_CACHE)
+
+@app.route('/api/settings', methods=['POST'])
+def set_symbol():
+    global CURRENT_SYMBOL
+    CURRENT_SYMBOL = request.json.get('symbol', 'BTC/USD').upper()
+    return jsonify({"symbol": CURRENT_SYMBOL})
 
 @app.route('/api/trades')
 def trades():
-    raw_data = database.get_trade_history()
-    json_data = []
-    for row in raw_data:
-        json_data.append({
-            "id": row[0], "symbol": row[1], "action": row[2], 
-            "price": row[3], "timestamp": row[4]
-        })
-    return jsonify(json_data)
+    raw = database.get_trade_history()
+    data = [{"id":r[0], "symbol":r[1], "action":r[2], "price":r[3], "timestamp":r[4]} for r in raw]
+    return jsonify(data)
+
+# --- NEW: POSITIONS ENDPOINT ---
+@app.route('/api/positions')
+def get_positions():
+    try:
+        client = TradingClient(API_KEY, SECRET_KEY, paper=True)
+        positions = client.get_all_positions()
+        data = []
+        for p in positions:
+            entry_time = "N/A"
+            try:
+                # Find the buy order time
+                req = GetOrdersRequest(symbol=p.symbol, side=OrderSide.BUY, status=QueryOrderStatus.FILLED, limit=1)
+                orders = client.get_orders(req)
+                if orders: entry_time = orders[0].filled_at.strftime('%b %d %H:%M')
+            except: pass
+
+            data.append({
+                "symbol": p.symbol,
+                "qty": float(p.qty),
+                "entry_price": float(p.avg_entry_price),
+                "current_price": float(p.current_price),
+                "pl": float(p.unrealized_pl),
+                "pl_pct": float(p.unrealized_plpc) * 100,
+                "entry_time": entry_time
+            })
+        return jsonify(data)
+    except Exception as e: return jsonify({"error": str(e)}), 500
 
 @app.route('/api/history')
 def history():
-    """Returns price data PLUS the new indicators (SMA_10, SMA_30)"""
     try:
-        df = get_market_data()
-        
-        # 1. Calculate Indicators
-        df['SMA_10'] = df['close'].rolling(window=10).mean()
-        df['SMA_30'] = df['close'].rolling(window=30).mean()
-        
+        df = get_market_data(CURRENT_SYMBOL)
+        if df.empty: return jsonify([])
+        df['SMA_10'] = df['close'].rolling(10).mean()
+        df['SMA_30'] = df['close'].rolling(30).mean()
         df = df.reset_index()
-        
-        chart_data = []
-        for index, row in df.iterrows():
-            if pd.isna(row['SMA_30']): continue # Skip until we have enough data
-                
-            chart_data.append({
-                "time": row['timestamp'].strftime('%H:%M'),
-                "price": row['close'],
-                "sma_fast": row['SMA_10'],
-                "sma_slow": row['SMA_30']
+        data = []
+        for i, row in df.iterrows():
+            ts = row['timestamp']
+            if hasattr(ts, 'to_pydatetime'): ts = ts.to_pydatetime()
+            s10 = row['SMA_10'] if not pd.isna(row['SMA_10']) else None
+            s30 = row['SMA_30'] if not pd.isna(row['SMA_30']) else None
+            data.append({
+                "time": ts.strftime('%H:%M'),
+                "open": row['open'], "high": row['high'], "low": row['low'], "close": row['close'],
+                "price": row['close'], "sma_fast": s10, "sma_slow": s30
             })
-            
-        return jsonify(chart_data)
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-    
+        return jsonify(data)
+    except Exception as e: return jsonify({"error": str(e)}), 500
+
 @app.route('/api/account')
 def account():
     try:
         client = TradingClient(API_KEY, SECRET_KEY, paper=True)
-        account = client.get_account()
+        acc = client.get_account()
         return jsonify({
-            "cash": float(account.cash),
-            "equity": float(account.equity),
-            "buying_power": float(account.buying_power)
+            "cash": float(acc.cash), "equity": float(acc.equity), 
+            "symbol": CURRENT_SYMBOL, "active": TRADING_ACTIVE
         })
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+    except: return jsonify({"error": "Account Error"}), 500
 
 @app.route('/api/manual', methods=['POST'])
-def manual_trade():
-    try:
-        data = request.json
-        action = data.get('action').upper()
-        df = get_market_data()
-        current_price = df.iloc[-1]['close']
-        execute_trade(action, current_price)
-        return jsonify({"status": "success", "message": f"Manual {action} executed"})
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+def manual():
+    data = request.json
+    action = data.get('action').upper()
+    df = get_market_data(CURRENT_SYMBOL)
+    price = df.iloc[-1]['close']
+    execute_trade(CURRENT_SYMBOL, action, price, manual=True)
+    return jsonify({"status": "success"})
 
-# --- TRADING LOGIC ---
-def get_market_data():
-    client = StockHistoricalDataClient(API_KEY, SECRET_KEY)
+# --- LOGIC ---
+def get_market_data(symbol):
     now = datetime.now()
-    request = StockBarsRequest(
-        symbol_or_symbols=SYMBOL,
-        timeframe=TimeFrame.Minute,
-        start=now - timedelta(minutes=200)
-    )
-    bars = client.get_stock_bars(request)
-    return bars.df
+    start = now - timedelta(hours=24)
+    if "/" in symbol:
+        client = CryptoHistoricalDataClient(API_KEY, SECRET_KEY)
+        req = CryptoBarsRequest(symbol_or_symbols=symbol, timeframe=TimeFrame.Minute, start=start)
+        return client.get_crypto_bars(req).df
+    else:
+        client = StockHistoricalDataClient(API_KEY, SECRET_KEY)
+        req = StockBarsRequest(symbol_or_symbols=symbol, timeframe=TimeFrame.Minute, start=start)
+        return client.get_stock_bars(req).df
 
-def calculate_rsi(series, period=14):
-    delta = series.diff()
-    gain = (delta.where(delta > 0, 0)).rolling(window=period).mean()
-    loss = (-delta.where(delta < 0, 0)).rolling(window=period).mean()
-    rs = gain / loss
-    return 100 - (100 / (1 + rs))
-
-def execute_trade(signal, price):
-    client = TradingClient(API_KEY, SECRET_KEY, paper=True)
-    if signal == "BUY":
-        print(f"🚀 BUY ORDER: {SYMBOL} @ {price}")
-        try:
-            order_data = MarketOrderRequest(symbol=SYMBOL, qty=1, side=OrderSide.BUY, time_in_force=TimeInForce.DAY)
-            client.submit_order(order_data)
-            database.log_trade(SYMBOL, "BUY", price)
-        except Exception as e:
-            print(f"Trade Failed: {e}")
-    elif signal == "SELL":
-        print(f"📉 SELL ORDER: {SYMBOL} @ {price}")
-        database.log_trade(SYMBOL, "SELL", price)
-
-def run_bot():
-    print(f"--- 🤖 ANALYZING MARKET {datetime.now().strftime('%H:%M:%S')} ---")
-    database.initialize_db()
+def calculate_safe_qty(symbol, price):
     try:
-        df = get_market_data()
-        
-        # --- NEW MATH ---
-        df['SMA_10'] = df['close'].rolling(window=10).mean()
-        df['SMA_30'] = df['close'].rolling(window=30).mean()
-        df['RSI'] = calculate_rsi(df['close'])
-        
-        latest = df.iloc[-1]
-        price = latest['close']
-        sma_fast = latest['SMA_10']
-        sma_slow = latest['SMA_30']
-        rsi = latest['RSI']
-        
-        # --- NEW STRATEGY ---
-        signal = "HOLD"
-        
-        # BUY CRITERIA: Fast crosses above Slow AND RSI is not Overbought (>70)
-        if sma_fast > sma_slow and rsi < 70:
-            signal = "BUY"
-            
-        # SELL CRITERIA: Fast crosses below Slow (Trend Reversal)
-        elif sma_fast < sma_slow:
-            signal = "SELL"
-            
-        print(f"Price: ${price:.2f} | Fast: {sma_fast:.2f} | Slow: {sma_slow:.2f} | RSI: {rsi:.1f} | Signal: {signal}")
-        
-        # Only trade if signal changes (Basic logic for now)
-        execute_trade(signal, price)
-        
-    except Exception as e:
-        print(f"❌ Error: {e}")
+        client = TradingClient(API_KEY, SECRET_KEY, paper=True)
+        acct = client.get_account()
+        equity = float(acct.equity)
+        budget = equity * MAX_POS_SIZE 
+        if budget < price and "/" not in symbol: return 0
+        if "/" in symbol: return round(budget / price, 4)
+        return math.floor(budget / price)
+    except: return 0
 
-def start_trading_loop():
+def execute_trade(symbol, signal, price, manual=False):
+    if not TRADING_ACTIVE and not manual: return
+    client = TradingClient(API_KEY, SECRET_KEY, paper=True)
+    
+    try:
+        pos = client.get_open_position(symbol)
+        qty_held = float(pos.qty)
+        has_pos = True
+    except:
+        has_pos = False
+        qty_held = 0
+
+    if signal == "BUY":
+        if has_pos and not manual:
+            print(f"✋ SKIP {symbol}: Already hold {qty_held}")
+            return
+        qty = calculate_safe_qty(symbol, price)
+        if qty == 0: return
+        print(f"🚀 BUY {qty} {symbol} @ ${price:.2f}")
+        try:
+            req = MarketOrderRequest(symbol=symbol, qty=qty, side=OrderSide.BUY, time_in_force=TimeInForce.GTC)
+            client.submit_order(req)
+            database.log_trade(symbol, "BUY", price)
+        except Exception as e: print(f"Order Error: {e}")
+
+    elif signal == "SELL":
+        if not has_pos: return
+        print(f"📉 SELL ALL {symbol} @ ${price:.2f}")
+        try:
+            req = MarketOrderRequest(symbol=symbol, qty=qty_held, side=OrderSide.SELL, time_in_force=TimeInForce.GTC)
+            client.submit_order(req)
+            database.log_trade(symbol, "SELL", price)
+        except Exception as e: print(f"Order Error: {e}")
+
+def run_portfolio_cycle():
+    print(f"--- 🔄 SCANNING PORTFOLIO {datetime.now().strftime('%H:%M')} ---")
+    database.initialize_db()
+    for symbol in WATCHLIST:
+        try:
+            df = get_market_data(symbol)
+            if len(df) < 30: continue
+            fast = df['close'].rolling(10).mean().iloc[-1]
+            slow = df['close'].rolling(30).mean().iloc[-1]
+            signal = "BUY" if fast > slow else "SELL" if fast < slow else "HOLD"
+            if signal != "HOLD":
+                print(f"🔍 {symbol}: {signal} Signal")
+                execute_trade(symbol, signal, df['close'].iloc[-1])
+        except Exception as e:
+            if "SPY" not in symbol: print(f"❌ Error {symbol}: {e}")
+
+def start_loop():
+    cache_assets()
     while True:
-        run_bot()
+        run_portfolio_cycle()
         time.sleep(60)
 
 if __name__ == "__main__":
-    t = threading.Thread(target=start_trading_loop)
+    t = threading.Thread(target=start_loop)
     t.daemon = True
     t.start()
-    port = int(os.environ.get("PORT", 5000))
+    # Using Port 5001 to avoid conflicts
+    port = int(os.environ.get("PORT", 5001))
     app.run(host='0.0.0.0', port=port)

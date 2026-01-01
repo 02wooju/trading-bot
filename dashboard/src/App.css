@@ -1,101 +1,360 @@
-/* --- GLOBAL LAYOUT --- */
-.App {
-  font-family: 'Inter', 'Segoe UI', sans-serif; /* Cleaner font */
-  background-color: #121212;
-  min-height: 100vh;
-  color: #e0e0e0;
+/* --- GLOBAL TRADINGVIEW THEME --- */
+body, html {
+  margin: 0;
+  padding: 0;
+  background-color: #131722; /* Deep Dark Background */
+  height: 100%;
+  overflow: hidden;
+  font-family: -apple-system, BlinkMacSystemFont, "Trebuchet MS", Roboto, Ubuntu, sans-serif;
+  color: #d1d4dc;
 }
 
-.App-header {
-  background-color: #1f1f1f;
-  padding: 20px 40px;
+.tv-container {
   display: flex;
-  justify-content: space-between; /* Space out title and balance */
+  flex-direction: column;
+  height: 100vh;
+}
+
+/* --- HEADER SECTION --- */
+.tv-header {
+  height: 50px;
+  background-color: #131722;
+  border-bottom: 1px solid #2a2e39;
+  display: flex;
   align-items: center;
-  border-bottom: 1px solid #333; /* Subtle border */
-  box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+  padding: 0 20px;
+  flex-shrink: 0;
 }
 
-h1 { margin: 0; font-size: 1.4rem; color: #fff; font-weight: 600; letter-spacing: 0.5px;}
-
-/* --- INFO PANEL (New) --- */
-.info-panel {
-  background-color: #1e1e1e;
-  padding: 20px;
-  margin: 20px auto;
-  max-width: 1150px;
-  border-radius: 8px;
-  border-left: 4px solid #00d8ff;
-  font-size: 0.9rem;
-  line-height: 1.5;
-  color: #ccc;
-}
-.info-title { color: #fff; font-weight: bold; margin-bottom: 5px; display: block; }
-
-.dashboard-content { max-width: 1200px; margin: 0 auto; padding: 20px; }
-
-/* --- STATS BAR --- */
-.stats-bar { display: flex; gap: 20px; align-items: center; }
-.stat-box { text-align: right; }
-.stat-label { font-size: 0.7rem; color: #888; text-transform: uppercase; display: block; }
-.stat-value { font-size: 1.2rem; font-weight: bold; color: #4caf50; }
-
-/* --- CONTROL PANEL --- */
-.control-panel {
-  display: flex;
-  justify-content: center;
-  gap: 15px;
-  margin-bottom: 30px;
+.tv-brand {
+  font-weight: 700;
+  color: #d1d4dc;
+  margin-right: 20px;
+  letter-spacing: 0.5px;
+  font-size: 1rem;
 }
 
-.btn {
-  padding: 12px 30px;
-  font-size: 0.9rem;
-  font-weight: 600;
-  border: none;
-  border-radius: 6px;
-  cursor: pointer;
+.pro-badge {
+  background: #2962ff;
   color: white;
-  text-transform: uppercase;
-  transition: opacity 0.2s;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 0.6rem;
+  margin-left: 5px;
+  vertical-align: middle;
 }
-.btn:hover { opacity: 0.9; }
-.btn-buy { background-color: #2e7d32; }
-.btn-sell { background-color: #c62828; }
 
-/* --- CHART CONTROLS (New) --- */
-.chart-header {
+.tv-ticker-info {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-grow: 1;
+}
+
+.ticker-name {
+  font-size: 1.1rem;
+  font-weight: bold;
+  color: #fff;
+}
+
+.ticker-badge {
+  background: #22ab94; /* Teal Green */
+  color: #000;
+  font-size: 0.65rem;
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-weight: 800;
+}
+
+.tv-stats {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  font-size: 0.9rem;
+}
+
+.stat-label {
+  color: #787b86;
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.stat-value {
+  color: #2962ff;
+  font-weight: bold;
+}
+
+/* --- MAIN LAYOUT (Chart + Sidebar) --- */
+.tv-body {
+  display: flex;
+  flex-grow: 1;
+  overflow: hidden;
+}
+
+/* --- CHART AREA --- */
+.tv-chart-area {
+  flex-grow: 1;
+  position: relative;
+  background-color: #131722;
+}
+
+/* --- RIGHT SIDEBAR --- */
+.tv-sidebar {
+  width: 300px;
+  background-color: #131722;
+  border-left: 1px solid #2a2e39;
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+}
+
+.sidebar-section {
+  border-bottom: 1px solid #2a2e39;
+  display: flex;
+  flex-direction: column;
+}
+
+.section-header {
+  padding: 10px 15px;
+  background: #1e222d;
+  border-bottom: 1px solid #2a2e39;
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 15px;
-  padding-bottom: 10px;
-  border-bottom: 1px solid #333;
 }
-.chart-controls { display: flex; gap: 10px; }
-.toggle-btn {
-  background: #333;
-  color: #aaa;
+
+.section-header span {
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: #787b86;
+  letter-spacing: 0.5px;
+}
+
+/* --- WATCHLIST ITEMS --- */
+.watchlist {
+  flex-grow: 1;
+  overflow: hidden;
+  min-height: 150px;
+}
+
+.watchlist-items {
+  overflow-y: auto;
+  height: 100%;
+}
+
+.watchlist-item {
+  padding: 12px 15px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  cursor: pointer;
+  border-bottom: 1px solid #1e222d;
+  transition: background 0.1s;
+}
+
+.watchlist-item:hover {
+  background-color: #2a2e39;
+}
+
+.watchlist-item.active {
+  background-color: #2a2e39;
+  border-left: 4px solid #2962ff; /* Active Blue Indicator */
+}
+
+.wl-sym {
+  font-weight: 700;
+  color: #d1d4dc;
+  font-size: 0.9rem;
+}
+
+/* --- CONTROLS & BUTTONS --- */
+.orders {
+  padding: 15px;
+  background: #171b26;
+}
+
+/* Master Switch Button */
+.toggle-system-btn {
+  width: 100%;
+  padding: 12px;
+  margin-bottom: 15px;
+  font-weight: 800;
   border: none;
-  padding: 5px 12px;
   border-radius: 4px;
   cursor: pointer;
+  letter-spacing: 1px;
+  transition: all 0.2s;
+  font-size: 0.85rem;
+}
+
+.toggle-system-btn.on {
+  background-color: #22ab94; /* Green */
+  color: #000;
+  box-shadow: 0 0 15px rgba(34, 171, 148, 0.2);
+}
+
+.toggle-system-btn.off {
+  background-color: #2a2e39;
+  color: #787b86;
+  border: 1px solid #444;
+}
+
+.toggle-system-btn.off:hover {
+  background-color: #363a45;
+  color: #fff;
+}
+
+/* Buy/Sell Buttons */
+.order-buttons {
+  display: flex;
+  gap: 10px;
+}
+
+.tv-btn {
+  flex: 1;
+  padding: 10px;
+  border: none;
+  border-radius: 4px;
+  font-weight: 700;
+  cursor: pointer;
+  color: white;
   font-size: 0.8rem;
-}
-.toggle-btn.active { background: #00d8ff; color: #000; font-weight: bold; }
-
-/* --- CONTAINERS --- */
-.chart-container, .table-container {
-  background-color: #1e1e1e;
-  padding: 25px;
-  border-radius: 12px;
-  box-shadow: 0 4px 20px rgba(0,0,0,0.2);
-  margin-bottom: 30px;
-  border: 1px solid #2a2a2a; /* Removed the white line issue */
+  transition: opacity 0.2s;
 }
 
-.trade-table { width: 100%; border-collapse: collapse; font-size: 0.9rem;}
-.trade-table th, .trade-table td { padding: 12px; text-align: left; border-bottom: 1px solid #333; }
-.trade-table th { color: #666; font-weight: 600; text-transform: uppercase; font-size: 0.75rem; }
-.buy-row { color: #4caf50; }
-.sell-row { color: #f44336; }
+.tv-btn:hover { opacity: 0.9; }
+
+.tv-btn.buy { background-color: #2962ff; }
+.tv-btn.sell { background-color: #f23645; }
+
+/* --- HISTORY / TRADES LOG --- */
+.history {
+  flex-grow: 1;
+  overflow: hidden;
+  max-height: 40%; /* Limit height so watchlist stays big */
+}
+
+.history-list {
+  overflow-y: auto;
+  height: 100%;
+}
+
+.history-item {
+  padding: 8px 15px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-bottom: 1px solid #2a2e39;
+  font-size: 0.85rem;
+}
+
+.badge {
+  font-size: 0.65rem;
+  padding: 2px 5px;
+  border-radius: 3px;
+  font-weight: 800;
+  min-width: 35px;
+  text-align: center;
+}
+
+.badge.BUY {
+  background: rgba(34, 171, 148, 0.15);
+  color: #22ab94;
+}
+
+.badge.SELL {
+  background: rgba(242, 54, 69, 0.15);
+  color: #f23645;
+}
+
+.hist-sym {
+  color: #fff;
+  font-weight: 600;
+}
+
+.hist-price {
+  color: #787b86;
+}
+
+/* Custom Scrollbar for Dark Theme */
+::-webkit-scrollbar {
+  width: 6px;
+}
+::-webkit-scrollbar-track {
+  background: #131722;
+}
+::-webkit-scrollbar-thumb {
+  background: #2a2e39;
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #444;
+}
+
+.positions {
+  flex-grow: 1;
+  overflow: hidden;
+  min-height: 150px;
+  background-color: #171b26;
+}
+
+.positions-list {
+  overflow-y: auto;
+  height: 100%;
+  padding: 5px 0;
+}
+
+.empty-msg {
+  padding: 20px;
+  text-align: center;
+  color: #555;
+  font-size: 0.8rem;
+  font-style: italic;
+}
+
+.pos-item {
+  padding: 10px 15px;
+  border-bottom: 1px solid #2a2e39;
+  background-color: #1e222d;
+  margin-bottom: 1px;
+}
+
+.pos-header {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 5px;
+}
+
+.pos-sym {
+  color: #fff;
+  font-weight: bold;
+  font-size: 0.9rem;
+}
+
+.pos-time {
+  color: #787b86;
+  font-size: 0.7rem;
+}
+
+.pos-details {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.pos-row {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.75rem;
+  color: #b2b5be;
+}
+
+.pos-row.pl {
+  margin-top: 4px;
+  padding-top: 4px;
+  border-top: 1px dashed #2a2e39;
+  font-weight: bold;
+}
+
+.pos-row.pl.win span:last-child { color: #22ab94; } /* Green */
+.pos-row.pl.loss span:last-child { color: #f23645; } /* Red */
