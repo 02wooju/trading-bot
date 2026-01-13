@@ -1,232 +1,201 @@
-import os
 import time
-import threading
-import math
 import pandas as pd
-from flask import Flask, jsonify, request
-from flask_cors import CORS 
+import numpy as np
+from datetime import datetime, timedelta
+import os
 from dotenv import load_dotenv
 
-# --- IMPORTS ---
-from alpaca.data.historical import StockHistoricalDataClient, CryptoHistoricalDataClient
-from alpaca.data.requests import StockBarsRequest, CryptoBarsRequest
-from alpaca.data.timeframe import TimeFrame
 from alpaca.trading.client import TradingClient
-from alpaca.trading.requests import MarketOrderRequest, GetAssetsRequest, GetOrdersRequest
-from alpaca.trading.enums import OrderSide, TimeInForce, AssetStatus, QueryOrderStatus
-from datetime import datetime, timedelta
-import database
+from alpaca.trading.requests import MarketOrderRequest, GetOrdersRequest
+from alpaca.trading.enums import OrderSide, TimeInForce, OrderStatus
+from alpaca.data.historical import StockHistoricalDataClient
+from alpaca.data.requests import StockBarsRequest
+from alpaca.data.timeframe import TimeFrame
+
+# Import your Risk Manager
+from risk_manager import RiskManager
 
 # --- CONFIGURATION ---
 load_dotenv()
 API_KEY = os.getenv("APCA_API_KEY_ID")
 SECRET_KEY = os.getenv("APCA_API_SECRET_KEY")
 
-# --- HEDGE FUND SETTINGS ---
-WATCHLIST = ['BTC/USD', 'ETH/USD', 'SPY', 'QQQ', 'NVDA', 'TSLA'] 
-MAX_POS_SIZE = 0.10  # Risk management: Max 10% per trade
-TRADING_ACTIVE = False 
-CURRENT_SYMBOL = "BTC/USD" 
+# FUNDED PORTFOLIO SETTINGS
+TICKERS = ["TSLA", "AAPL", "GLD", "USO", "SPY"]
+PAPER_MODE = True  # Set to False when you get a real Funded Account
 
-app = Flask(__name__)
-CORS(app)
+# Initialize Clients
+trading_client = TradingClient(API_KEY, SECRET_KEY, paper=PAPER_MODE)
+data_client = StockHistoricalDataClient(API_KEY, SECRET_KEY)
 
-# --- CACHING ---
-ASSET_CACHE = []
-def cache_assets():
-    global ASSET_CACHE
-    try:
-        print("⏳ Loading Asset Database...")
-        client = TradingClient(API_KEY, SECRET_KEY, paper=True)
-        req = GetAssetsRequest(status=AssetStatus.ACTIVE)
-        assets = client.get_all_assets(req)
-        temp = [{"symbol": a.symbol, "name": a.name} for a in assets if a.tradable]
-        ASSET_CACHE = temp
-        print(f"✅ Loaded {len(ASSET_CACHE)} Assets!")
-    except: pass
+# Initialize Risk Manager (We update the balance inside the loop)
+# We assume $100k start for paper, but the code adapts to actual account value
+risk_manager = RiskManager(initial_balance=100000, daily_risk_limit=0.01, max_drawdown_limit=0.06)
 
-# --- ROUTES ---
-@app.route('/')
-def home(): return f"🤖 Bot Active: {TRADING_ACTIVE}"
+def get_account_equity():
+    account = trading_client.get_account()
+    return float(account.equity)
 
-@app.route('/api/toggle', methods=['POST'])
-def toggle():
-    global TRADING_ACTIVE
-    TRADING_ACTIVE = not TRADING_ACTIVE
-    return jsonify({"active": TRADING_ACTIVE})
-
-@app.route('/api/status')
-def status(): return jsonify({"active": TRADING_ACTIVE, "symbol": CURRENT_SYMBOL})
-
-@app.route('/api/assets')
-def assets(): return jsonify(ASSET_CACHE)
-
-@app.route('/api/settings', methods=['POST'])
-def set_symbol():
-    global CURRENT_SYMBOL
-    CURRENT_SYMBOL = request.json.get('symbol', 'BTC/USD').upper()
-    return jsonify({"symbol": CURRENT_SYMBOL})
-
-@app.route('/api/trades')
-def trades():
-    raw = database.get_trade_history()
-    data = [{"id":r[0], "symbol":r[1], "action":r[2], "price":r[3], "timestamp":r[4]} for r in raw]
-    return jsonify(data)
-
-# --- NEW: POSITIONS ENDPOINT ---
-@app.route('/api/positions')
-def get_positions():
-    try:
-        client = TradingClient(API_KEY, SECRET_KEY, paper=True)
-        positions = client.get_all_positions()
-        data = []
-        for p in positions:
-            entry_time = "N/A"
-            try:
-                # Find the buy order time
-                req = GetOrdersRequest(symbol=p.symbol, side=OrderSide.BUY, status=QueryOrderStatus.FILLED, limit=1)
-                orders = client.get_orders(req)
-                if orders: entry_time = orders[0].filled_at.strftime('%b %d %H:%M')
-            except: pass
-
-            data.append({
-                "symbol": p.symbol,
-                "qty": float(p.qty),
-                "entry_price": float(p.avg_entry_price),
-                "current_price": float(p.current_price),
-                "pl": float(p.unrealized_pl),
-                "pl_pct": float(p.unrealized_plpc) * 100,
-                "entry_time": entry_time
-            })
-        return jsonify(data)
-    except Exception as e: return jsonify({"error": str(e)}), 500
-
-@app.route('/api/history')
-def history():
-    try:
-        df = get_market_data(CURRENT_SYMBOL)
-        if df.empty: return jsonify([])
-        df['SMA_10'] = df['close'].rolling(10).mean()
-        df['SMA_30'] = df['close'].rolling(30).mean()
-        df = df.reset_index()
-        data = []
-        for i, row in df.iterrows():
-            ts = row['timestamp']
-            if hasattr(ts, 'to_pydatetime'): ts = ts.to_pydatetime()
-            s10 = row['SMA_10'] if not pd.isna(row['SMA_10']) else None
-            s30 = row['SMA_30'] if not pd.isna(row['SMA_30']) else None
-            data.append({
-                "time": ts.strftime('%H:%M'),
-                "open": row['open'], "high": row['high'], "low": row['low'], "close": row['close'],
-                "price": row['close'], "sma_fast": s10, "sma_slow": s30
-            })
-        return jsonify(data)
-    except Exception as e: return jsonify({"error": str(e)}), 500
-
-@app.route('/api/account')
-def account():
-    try:
-        client = TradingClient(API_KEY, SECRET_KEY, paper=True)
-        acc = client.get_account()
-        return jsonify({
-            "cash": float(acc.cash), "equity": float(acc.equity), 
-            "symbol": CURRENT_SYMBOL, "active": TRADING_ACTIVE
-        })
-    except: return jsonify({"error": "Account Error"}), 500
-
-@app.route('/api/manual', methods=['POST'])
-def manual():
-    data = request.json
-    action = data.get('action').upper()
-    df = get_market_data(CURRENT_SYMBOL)
-    price = df.iloc[-1]['close']
-    execute_trade(CURRENT_SYMBOL, action, price, manual=True)
-    return jsonify({"status": "success"})
-
-# --- LOGIC ---
-def get_market_data(symbol):
-    now = datetime.now()
-    start = now - timedelta(hours=24)
-    if "/" in symbol:
-        client = CryptoHistoricalDataClient(API_KEY, SECRET_KEY)
-        req = CryptoBarsRequest(symbol_or_symbols=symbol, timeframe=TimeFrame.Minute, start=start)
-        return client.get_crypto_bars(req).df
-    else:
-        client = StockHistoricalDataClient(API_KEY, SECRET_KEY)
-        req = StockBarsRequest(symbol_or_symbols=symbol, timeframe=TimeFrame.Minute, start=start)
-        return client.get_stock_bars(req).df
-
-def calculate_safe_qty(symbol, price):
-    try:
-        client = TradingClient(API_KEY, SECRET_KEY, paper=True)
-        acct = client.get_account()
-        equity = float(acct.equity)
-        budget = equity * MAX_POS_SIZE 
-        if budget < price and "/" not in symbol: return 0
-        if "/" in symbol: return round(budget / price, 4)
-        return math.floor(budget / price)
-    except: return 0
-
-def execute_trade(symbol, signal, price, manual=False):
-    if not TRADING_ACTIVE and not manual: return
-    client = TradingClient(API_KEY, SECRET_KEY, paper=True)
+def fetch_latest_bars(tickers):
+    """Fetch the last 200 hours of data for all tickers to calculate indicators"""
+    print(f"⏳ Fetching live market data...")
+    end_time = datetime.now()
+    start_time = end_time - timedelta(days=20) # Get enough buffer for 200 SMA
     
-    try:
-        pos = client.get_open_position(symbol)
-        qty_held = float(pos.qty)
-        has_pos = True
-    except:
-        has_pos = False
-        qty_held = 0
-
-    if signal == "BUY":
-        if has_pos and not manual:
-            print(f"✋ SKIP {symbol}: Already hold {qty_held}")
-            return
-        qty = calculate_safe_qty(symbol, price)
-        if qty == 0: return
-        print(f"🚀 BUY {qty} {symbol} @ ${price:.2f}")
+    req = StockBarsRequest(
+        symbol_or_symbols=tickers,
+        timeframe=TimeFrame.Hour,
+        start=start_time,
+        end=end_time
+    )
+    bars = data_client.get_stock_bars(req)
+    
+    # Process into Dictionary of DataFrames
+    data_map = {}
+    multi_df = bars.df
+    
+    for ticker in tickers:
         try:
-            req = MarketOrderRequest(symbol=symbol, qty=qty, side=OrderSide.BUY, time_in_force=TimeInForce.GTC)
-            client.submit_order(req)
-            database.log_trade(symbol, "BUY", price)
-        except Exception as e: print(f"Order Error: {e}")
-
-    elif signal == "SELL":
-        if not has_pos: return
-        print(f"📉 SELL ALL {symbol} @ ${price:.2f}")
-        try:
-            req = MarketOrderRequest(symbol=symbol, qty=qty_held, side=OrderSide.SELL, time_in_force=TimeInForce.GTC)
-            client.submit_order(req)
-            database.log_trade(symbol, "SELL", price)
-        except Exception as e: print(f"Order Error: {e}")
-
-def run_portfolio_cycle():
-    print(f"--- 🔄 SCANNING PORTFOLIO {datetime.now().strftime('%H:%M')} ---")
-    database.initialize_db()
-    for symbol in WATCHLIST:
-        try:
-            df = get_market_data(symbol)
-            if len(df) < 30: continue
-            fast = df['close'].rolling(10).mean().iloc[-1]
-            slow = df['close'].rolling(30).mean().iloc[-1]
-            signal = "BUY" if fast > slow else "SELL" if fast < slow else "HOLD"
-            if signal != "HOLD":
-                print(f"🔍 {symbol}: {signal} Signal")
-                execute_trade(symbol, signal, df['close'].iloc[-1])
+            df = multi_df.xs(ticker, level=0).copy()
+            df = df.reset_index()
+            
+            # Calculate Indicators
+            df['SMA_20'] = df['close'].rolling(window=20).mean()
+            df['STD_20'] = df['close'].rolling(window=20).std()
+            df['Upper'] = df['SMA_20'] + (2 * df['STD_20'])
+            df['Lower'] = df['SMA_20'] - (2 * df['STD_20'])
+            df['SMA_200'] = df['close'].rolling(window=200).mean()
+            
+            data_map[ticker] = df
         except Exception as e:
-            if "SPY" not in symbol: print(f"❌ Error {symbol}: {e}")
+            print(f"⚠️ Could not process {ticker}: {e}")
+            
+    return data_map
 
-def start_loop():
-    cache_assets()
-    while True:
-        run_portfolio_cycle()
-        time.sleep(60)
+def close_position(ticker, qty, side):
+    """Closes a position by placing an opposing order"""
+    print(f"CLOSING {ticker} ({qty} shares)...")
+    try:
+        req = MarketOrderRequest(
+            symbol=ticker,
+            qty=abs(qty),
+            side=OrderSide.SELL if side == 'LONG' else OrderSide.BUY,
+            time_in_force=TimeInForce.DAY
+        )
+        trading_client.submit_order(order_data=req)
+    except Exception as e:
+        print(f"❌ Failed to close {ticker}: {e}")
+
+def enter_position(ticker, side, equity):
+    """Calculates size and places a new trade"""
+    # SIZE CALCULATION (From Backtest: 45% of Allocation)
+    # 5 Tickers = 20% Allocation each. 45% of 20% = 9% Total Risk per trade.
+    allocation = equity / len(TICKERS)
+    trade_amt = allocation * 0.45 
+    
+    # Get current price
+    req = StockBarsRequest(symbol_or_symbols=ticker, timeframe=TimeFrame.Minute, limit=1)
+    bar = data_client.get_stock_bars(req).df.iloc[-1]
+    price = bar['close']
+    
+    qty = int(trade_amt // price)
+    if qty < 1:
+        print(f"⚠️ {ticker}: Insufficient funds for 1 share.")
+        return
+
+    print(f"🚀 ENTERING {side} {ticker}: {qty} shares @ ${price}")
+    try:
+        req = MarketOrderRequest(
+            symbol=ticker,
+            qty=qty,
+            side=OrderSide.BUY if side == 'LONG' else OrderSide.SELL,
+            time_in_force=TimeInForce.DAY
+        )
+        trading_client.submit_order(order_data=req)
+    except Exception as e:
+        print(f"❌ Order Failed: {e}")
+
+def run_bot_cycle():
+    print(f"\n--- 🤖 BOT CYCLE START: {datetime.now()} ---")
+    
+    # 1. CHECK ACCOUNT & RISK
+    equity = get_account_equity()
+    today = datetime.now()
+    allowed, msg = risk_manager.check_trade_allowed(today, equity)
+    
+    print(f"💰 Equity: ${equity:,.2f} | Status: {msg}")
+    
+    if not allowed:
+        print("🛑 RISK MANAGER TRIGGERED. HALTING TRADING.")
+        # Optional: Add logic here to liquidate all positions if risk hit
+        return
+
+    # 2. GET POSITIONS
+    alpaca_positions = trading_client.get_all_positions()
+    pos_map = {p.symbol: p for p in alpaca_positions}
+
+    # 3. GET DATA
+    data_map = fetch_latest_bars(TICKERS)
+    
+    # 4. LOOP THROUGH TICKERS
+    for ticker in TICKERS:
+        if ticker not in data_map: continue
+        
+        df = data_map[ticker]
+        if df.empty: continue
+        
+        # Get Latest Candle
+        row = df.iloc[-1] 
+        price = row['close']
+        
+        # Check if we have a position
+        has_position = ticker in pos_map
+        current_qty = float(pos_map[ticker].qty) if has_position else 0
+        
+        # Determine Current Side (Long/Short) based on qty
+        # Alpaca returns negative qty for shorts
+        pos_type = None
+        if current_qty > 0: pos_type = 'LONG'
+        elif current_qty < 0: pos_type = 'SHORT'
+        
+        # --- LOGIC ---
+        
+        # A. MANAGE EXISTING POSITIONS
+        if pos_type == 'LONG':
+            if price > row['SMA_20']:
+                print(f"🔵 {ticker}: Mean Reversion Exit Reached (Price > SMA). Closing.")
+                close_position(ticker, current_qty, 'LONG')
+                
+        elif pos_type == 'SHORT':
+            if price < row['SMA_20']:
+                print(f"🔵 {ticker}: Mean Reversion Exit Reached (Price < SMA). Closing.")
+                close_position(ticker, current_qty, 'SHORT')
+
+        # B. CHECK NEW ENTRIES (Only if flat)
+        if not has_position:
+            # LONG SIGNAL
+            if price < row['Lower'] and price > row['SMA_200']:
+                print(f"🟢 {ticker}: Oversold in Uptrend. BUY SIGNAL.")
+                enter_position(ticker, 'LONG', equity)
+                
+            # SHORT SIGNAL
+            elif price > row['Upper'] and price < row['SMA_200']:
+                print(f"🟣 {ticker}: Overbought in Downtrend. SELL SIGNAL.")
+                enter_position(ticker, 'SHORT', equity)
+            else:
+                print(f"⚪ {ticker}: No Signal.")
 
 if __name__ == "__main__":
-    t = threading.Thread(target=start_loop)
-    t.daemon = True
-    t.start()
-    # Using Port 5001 to avoid conflicts
-    port = int(os.environ.get("PORT", 5001))
-    app.run(host='0.0.0.0', port=port)
+    print("🤖 PORTFOLIO TRADING BOT INITIALIZED")
+    print(f"watching: {TICKERS}")
+    
+    while True:
+        try:
+            run_bot_cycle()
+            # Sleep for 1 hour (3600 seconds)
+            # For testing, you can reduce this, but for live, stick to 1H candles
+            print("💤 Sleeping for 60 minutes...")
+            time.sleep(3600) 
+        except Exception as e:
+            print(f"⚠️ CRITICAL ERROR: {e}")
+            time.sleep(60) # Wait 1 min before retry
